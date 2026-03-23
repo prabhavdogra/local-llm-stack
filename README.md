@@ -17,6 +17,14 @@ Docker Compose:
 
 All inference flows through LiteLLM. Swapping the backend = updating `models.yaml`.
 
+## Setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Quick Start
 
 ```bash
@@ -35,7 +43,7 @@ open http://localhost:3001
 | Prometheus  | http://localhost:9090       |
 | MLX Server  | http://localhost:8800       |
 
-## Adding a Model
+## Adding a Model (Optional: If you want a different model)
 
 **1. Add it to `models.yaml`:**
 
