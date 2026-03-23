@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # ── LiteLLM Gateway ────────────────────────────────────────────────────
+  # Scrapes request latency, token counts, error rates from the proxy.
+  # Works regardless of backend (MLX, Ollama, vLLM).
+  - job_name: litellm
+    metrics_path: /metrics/
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["litellm:4000"]
+        labels:
+          backend: litellm

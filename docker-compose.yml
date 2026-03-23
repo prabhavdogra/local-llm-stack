@@ -1,0 +1,94 @@
+# ── Local LLM Stack ──────────────────────────────────────────────────────────
+# Phase 1: MLX-LM runs natively on macOS (Apple Silicon). All Docker services
+#           reach it via host.docker.internal:8800.
+#           Managed by `make up` / `make down` (see Makefile).
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Inference Gateway ────────────────────────────────────────────────────
+  # Single OpenAI-compatible endpoint. All consumers talk to this.
+  # Routes requests to the correct backend based on models.yaml.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./models.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmstack-local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Chat UI ──────────────────────────────────────────────────────────────
+  # Open WebUI connects to LiteLLM for inference (the unified gateway).
+  # Model management is handled via `make pull` / `make models`.
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "${WEBUI_PORT:-3001}:8080"
+    volumes:
+      - openwebui_data:/app/backend/data
+    environment:
+      # No Ollama — using MLX-LM natively
+      - ENABLE_OLLAMA_API=false
+      # Inference — routed through LiteLLM
+      - OPENAI_API_BASE_URLS=http://litellm:4000/v1
+      - OPENAI_API_KEYS=${LITELLM_MASTER_KEY:-sk-llmstack-local}
+      - WEBUI_AUTH=false
+      - ENABLE_SIGNUP=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - litellm
+    restart: unless-stopped
+
+  # ── Metrics Collection ───────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ── Dashboards ───────────────────────────────────────────────────────────
+  # Grafana: visualization and dashboarding for Prometheus metrics.
+  # Pre-provisioned with datasources and dashboards via ./grafana/provisioning.
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  openwebui_data:
+  prometheus_data:
+  grafana_data:

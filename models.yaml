@@ -1,0 +1,226 @@
+# ── models.yaml ──────────────────────────────────────────────────────────────
+# Single source of truth for the entire stack.
+#
+# This file IS the LiteLLM config (mounted as /app/config.yaml).
+# LiteLLM reads model_list + litellm_params for routing.
+# model_info carries our metadata for recommendations and the model browser.
+#
+# Backend: MLX-LM server on Apple Silicon (OpenAI-compatible API).
+# All models point at the MLX server. The server loads/swaps models on demand.
+#
+# To add a model:
+#   1. Add an entry below (use the mlx-community HuggingFace model ID)
+#   2. Run: make pull MODEL=mlx-community/<model-name>
+#   3. Run: make restart-litellm
+#
+# To remove a model:
+#   1. Delete the entry below
+#   2. Run: make restart-litellm
+# ─────────────────────────────────────────────────────────────────────────────
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  request_timeout: 3600
+  stream_timeout: 600
+  success_callback: ["prometheus"]
+  failure_callback: ["prometheus"]
+
+model_list:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CODE GENERATION
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - model_name: qwen3:30b-a3b
+    litellm_params:
+      model: openai/mlx-community/Qwen3-30B-A3B-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: qwen3-30b-a3b
+      description: "MoE — 30B total, 3B active per token. Top-tier code gen with native tool-use."
+      tasks: [code, agentic]
+      params_b: 30
+      active_b: 3
+      arch: moe
+      quant: 4bit
+      context: 32768
+      vram_gb: 18
+
+  - model_name: qwen2.5-coder:14b
+    litellm_params:
+      model: openai/mlx-community/Qwen2.5-Coder-14B-Instruct-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: qwen25-coder-14b
+      description: "Dense 14B code-focused model. Strong at completion and generation."
+      tasks: [code]
+      params_b: 14
+      active_b: 14
+      arch: dense
+      quant: 4bit
+      context: 32768
+      vram_gb: 9
+
+  - model_name: qwen2.5-coder:7b
+    litellm_params:
+      model: openai/mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: qwen25-coder-7b
+      description: "Lightweight code model. Fast inference, good for autocomplete."
+      tasks: [code]
+      params_b: 7
+      active_b: 7
+      arch: dense
+      quant: 4bit
+      context: 32768
+      vram_gb: 5
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CHAT / GENERAL PURPOSE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - model_name: llama3.1:8b
+    litellm_params:
+      model: openai/mlx-community/Meta-Llama-3.1-8B-Instruct-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: llama31-8b
+      description: "Meta's 8B model. Strong general-purpose chat and reasoning."
+      tasks: [chat, code]
+      params_b: 8
+      active_b: 8
+      arch: dense
+      quant: 4bit
+      context: 131072
+      vram_gb: 5
+
+  - model_name: gemma3:12b
+    litellm_params:
+      model: openai/mlx-community/gemma-3-12b-it-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: gemma3-12b
+      description: "Google's 12B model. Multilingual, supports vision."
+      tasks: [chat]
+      params_b: 12
+      active_b: 12
+      arch: dense
+      quant: 4bit
+      context: 32768
+      vram_gb: 8
+
+  - model_name: phi-4:14b
+    litellm_params:
+      model: openai/mlx-community/phi-4-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: phi4-14b
+      description: "Microsoft's reasoning model. Strong on math, logic, structured output."
+      tasks: [chat, code]
+      params_b: 14
+      active_b: 14
+      arch: dense
+      quant: 4bit
+      context: 16384
+      vram_gb: 9
+
+  - model_name: mistral:7b
+    litellm_params:
+      model: openai/mlx-community/Mistral-7B-Instruct-v0.3-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: mistral-7b
+      description: "Fast and efficient 7B model. Best quality-to-speed ratio at this size."
+      tasks: [chat]
+      params_b: 7
+      active_b: 7
+      arch: dense
+      quant: 4bit
+      context: 32768
+      vram_gb: 4.5
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LONG-CONTEXT / DOCUMENT ANALYSIS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - model_name: qwen2.5:14b
+    litellm_params:
+      model: openai/mlx-community/Qwen2.5-14B-Instruct-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: qwen25-14b
+      description: "General-purpose 14B with 128K native context. Best for long documents."
+      tasks: [chat, long-context]
+      params_b: 14
+      active_b: 14
+      arch: dense
+      quant: 4bit
+      context: 131072
+      vram_gb: 9
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # AGENTIC / TOOL-USE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - model_name: qwen3:8b
+    litellm_params:
+      model: openai/mlx-community/Qwen3-8B-4bit
+      api_key: none
+      api_base: http://host.docker.internal:8800/v1
+    model_info:
+      id: qwen3-8b
+      description: "Lightweight Qwen3 with native tool-use. Good agent on a budget."
+      tasks: [chat, agentic]
+      params_b: 8
+      active_b: 8
+      arch: dense
+      quant: 4bit
+      context: 32768
+      vram_gb: 5
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Phase 2: vLLM models (uncomment and add when migrating to NVIDIA)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#  - model_name: qwen3-30b-a3b-awq
+#    litellm_params:
+#      model: openai/Qwen/Qwen3-Coder-30B-A3B-Instruct-AWQ
+#      api_base: http://vllm-qwen3-30b:8000/v1
+#    model_info:
+#      id: qwen3-30b-a3b-awq
+#      description: "AWQ-quantised for vLLM. Same model, better throughput on NVIDIA."
+#      tasks: [code, agentic]
+#      params_b: 30
+#      active_b: 3
+#      arch: moe
+#      quant: awq
+#      context: 32768
+#      vram_gb: 16
+#
+#  - model_name: qwen25-32b-awq
+#    litellm_params:
+#      model: openai/Qwen/Qwen2.5-32B-Instruct-AWQ
+#      api_base: http://vllm-qwen25-32b:8000/v1
+#    model_info:
+#      id: qwen25-32b-awq
+#      description: "Dense 32B on vLLM. Full context performance with AWQ + fp8 KV cache."
+#      tasks: [chat, long-context, code]
+#      params_b: 32
+#      active_b: 32
+#      arch: dense
+#      quant: awq
+#      context: 32768
+#      vram_gb: 18

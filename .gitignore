@@ -1,0 +1,4 @@
+.DS_Store
+.venv/
+.mlx.pid
+.mlx.log
