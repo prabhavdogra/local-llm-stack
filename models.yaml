@@ -1,21 +1,14 @@
 # ── models.yaml ──────────────────────────────────────────────────────────────
-# Single source of truth for the entire stack.
+# LiteLLM config for MLX backend (Apple Silicon, macOS).
+# Mounted as /app/config.yaml when BACKEND=mlx (the default).
 #
-# This file IS the LiteLLM config (mounted as /app/config.yaml).
-# LiteLLM reads model_list + litellm_params for routing.
-# model_info carries our metadata for recommendations and the model browser.
-#
-# Backend: MLX-LM server on Apple Silicon (OpenAI-compatible API).
-# All models point at the MLX server. The server loads/swaps models on demand.
+# The MLX server loads/swaps models on demand, so all entries below work
+# simultaneously through a single MLX process.
 #
 # To add a model:
 #   1. Add an entry below (use the mlx-community HuggingFace model ID)
 #   2. Run: make pull MODEL=mlx-community/<model-name>
 #   3. Run: make restart-litellm
-#
-# To remove a model:
-#   1. Delete the entry below
-#   2. Run: make restart-litellm
 # ─────────────────────────────────────────────────────────────────────────────
 
 general_settings:
@@ -24,8 +17,9 @@ general_settings:
 litellm_settings:
   drop_params: true
   set_verbose: false
-  request_timeout: 3600
-  stream_timeout: 600
+  request_timeout: 600
+  stream_timeout: 300
+  num_retries: 2
   success_callback: ["prometheus"]
   failure_callback: ["prometheus"]
 
@@ -190,37 +184,3 @@ model_list:
       quant: 4bit
       context: 32768
       vram_gb: 5
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Phase 2: vLLM models (uncomment and add when migrating to NVIDIA)
-# ═════════════════════════════════════════════════════════════════════════════
-#
-#  - model_name: qwen3-30b-a3b-awq
-#    litellm_params:
-#      model: openai/Qwen/Qwen3-Coder-30B-A3B-Instruct-AWQ
-#      api_base: http://vllm-qwen3-30b:8000/v1
-#    model_info:
-#      id: qwen3-30b-a3b-awq
-#      description: "AWQ-quantised for vLLM. Same model, better throughput on NVIDIA."
-#      tasks: [code, agentic]
-#      params_b: 30
-#      active_b: 3
-#      arch: moe
-#      quant: awq
-#      context: 32768
-#      vram_gb: 16
-#
-#  - model_name: qwen25-32b-awq
-#    litellm_params:
-#      model: openai/Qwen/Qwen2.5-32B-Instruct-AWQ
-#      api_base: http://vllm-qwen25-32b:8000/v1
-#    model_info:
-#      id: qwen25-32b-awq
-#      description: "Dense 32B on vLLM. Full context performance with AWQ + fp8 KV cache."
-#      tasks: [chat, long-context, code]
-#      params_b: 32
-#      active_b: 32
-#      arch: dense
-#      quant: awq
-#      context: 32768
-#      vram_gb: 18

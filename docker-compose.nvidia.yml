@@ -1,0 +1,77 @@
+# ── NVIDIA GPU Override ──────────────────────────────────────────────────────
+# Adds vLLM inference server and rewires LiteLLM to use it.
+# Merged automatically when BACKEND=nvidia (`make up` reads .env).
+#
+# Model selection is fully env-driven:
+#   1. Set VLLM_MODEL in .env
+#   2. Run: make restart
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── vLLM Inference Server (GPU) ─────────────────────────────────────────
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    ipc: host
+    ports:
+      - "127.0.0.1:${VLLM_PORT:-8000}:8000"
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_LOGGING_LEVEL=INFO
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen3-Coder-Next-FP8}
+      - --served-model-name
+      - ${VLLM_MODEL:-Qwen/Qwen3-Coder-Next-FP8}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --dtype
+      - auto
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-32768}"
+      - --tensor-parallel-size
+      - "${VLLM_TENSOR_PARALLEL_SIZE:-1}"
+      - --trust-remote-code
+      - --enforce-eager
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - llmstack
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 120
+      start_period: 1800s
+
+  # ── LiteLLM overrides ──────────────────────────────────────────────────
+  litellm:
+    volumes:
+      - ./models.nvidia.yaml:/app/config.yaml:ro
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmstack-local}
+      - LITELLM_MODEL=openai/${VLLM_MODEL:-Qwen/Qwen3-Coder-Next-FP8}
+    depends_on:
+      vllm:
+        condition: service_healthy
+
+volumes:
+  huggingface_cache:

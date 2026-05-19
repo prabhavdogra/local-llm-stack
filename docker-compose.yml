@@ -1,14 +1,16 @@
 # ── Local LLM Stack ──────────────────────────────────────────────────────────
-# Phase 1: MLX-LM runs natively on macOS (Apple Silicon). All Docker services
-#           reach it via host.docker.internal:8800.
-#           Managed by `make up` / `make down` (see Makefile).
+# Shared services for every backend.  Backend-specific additions live in
+# docker-compose.nvidia.yml (merged automatically when BACKEND=nvidia).
+#
+# Usage:
+#   make up                   Start stack (reads BACKEND from .env)
+#   make up BACKEND=nvidia    Override backend for this invocation
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
 
   # ── Inference Gateway ────────────────────────────────────────────────────
-  # Single OpenAI-compatible endpoint. All consumers talk to this.
-  # Routes requests to the correct backend based on models.yaml.
+  # Single OpenAI-compatible endpoint for all consumers.
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: litellm
@@ -16,21 +18,33 @@ services:
       - "${LITELLM_PORT:-4000}:4000"
     volumes:
       - ./models.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "4000"
+      - "--num_workers"
+      - "${LITELLM_WORKERS:-4}"
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmstack-local}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - llmstack
     restart: unless-stopped
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
 
   # ── Chat UI ──────────────────────────────────────────────────────────────
-  # Open WebUI connects to LiteLLM for inference (the unified gateway).
-  # Model management is handled via `make pull` / `make models`.
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
@@ -39,39 +53,42 @@ services:
     volumes:
       - openwebui_data:/app/backend/data
     environment:
-      # No Ollama — using MLX-LM natively
       - ENABLE_OLLAMA_API=false
-      # Inference — routed through LiteLLM
       - OPENAI_API_BASE_URLS=http://litellm:4000/v1
       - OPENAI_API_KEYS=${LITELLM_MASTER_KEY:-sk-llmstack-local}
       - WEBUI_AUTH=false
       - ENABLE_SIGNUP=false
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - llmstack
     depends_on:
-      - litellm
+      litellm:
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
-  # ── Metrics Collection ───────────────────────────────────────────────────
+  # ── Metrics ──────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
+      - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - llmstack
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
 
   # ── Dashboards ───────────────────────────────────────────────────────────
-  # Grafana: visualization and dashboarding for Prometheus metrics.
-  # Pre-provisioned with datasources and dashboards via ./grafana/provisioning.
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -84,9 +101,20 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    networks:
+      - llmstack
     depends_on:
       - prometheus
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+
+networks:
+  llmstack:
+    driver: bridge
 
 volumes:
   openwebui_data:

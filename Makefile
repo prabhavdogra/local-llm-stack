@@ -1,33 +1,142 @@
-# ── Local LLM Stack (MLX Backend) ────────────────────────────────────────────
+# ── Local LLM Stack ──────────────────────────────────────────────────────────
 # Usage:
-#   make up                              Start everything (auto-installs deps)
-#   make down                            Stop everything
-#   make pull MODEL=mlx-community/...    Pre-download a model
-#   make pull-all                        Download all models in models.yaml
-#   make models                          List downloaded models
-#   make status                          Show running services + MLX server
-#   make test                            Smoke-test the LiteLLM gateway
+#   make up                        Start (reads BACKEND from .env)
+#   make up BACKEND=nvidia         Override backend for this run
+#   make down                      Stop everything
+#   make restart                   Restart everything
+#   make health                    Probe all service health endpoints
+#   make status                    Show running containers + loaded model
+#   make logs [s=SERVICE]          Tail logs (e.g. make logs s=vllm)
+#   make test                      Smoke-test the LiteLLM API
+#   make pull MODEL=<hf-id>        Pre-download a model
 # ─────────────────────────────────────────────────────────────────────────────
 
-DC       := docker compose
-VENV     := .venv
-PIP      := $(VENV)/bin/pip
-PYTHON   := $(VENV)/bin/python
-MLX_PORT := 8800
-MLX_PID  := .mlx.pid
-MLX_LOG  := .mlx.log
+# Load .env as Make variables; export them to child processes (docker compose).
+-include .env
+export
 
-# Default model loaded at startup (override: make up MLX_DEFAULT_MODEL=...)
-MLX_DEFAULT_MODEL ?= mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
+# ── Configurable defaults (override via .env or command line) ───────────────
+BACKEND          ?= nvidia
+MLX_MODEL        ?= mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
+MLX_PORT         ?= 8800
+VLLM_MODEL       ?= Qwen/Qwen3-Coder-Next
+VLLM_PORT        ?= 8000
+LITELLM_PORT     ?= 4000
+LITELLM_MASTER_KEY ?= sk-llmstack-local
+WEBUI_PORT       ?= 3001
+GRAFANA_PORT     ?= 3000
+PROMETHEUS_PORT  ?= 9090
 
-.PHONY: up down restart logs status \
-        setup mlx-start mlx-stop \
-        pull pull-all models test \
-        restart-litellm clean
+# ── Internal ────────────────────────────────────────────────────────────────
+VENV    := .venv
+PIP     := $(VENV)/bin/pip
+PYTHON  := $(VENV)/bin/python
+MLX_PID := .mlx.pid
+MLX_LOG := .mlx.log
+
+ifeq ($(BACKEND),nvidia)
+DC := docker compose -f docker-compose.yml -f docker-compose.nvidia.yml
+else
+DC := docker compose
+endif
+
+.PHONY: up down restart logs status health test \
+        setup mlx-start mlx-stop mlx-logs \
+        pull pull-all models restart-litellm clean
 
 # ── Stack Lifecycle ──────────────────────────────────────────────────────────
 
-## Install Python 3.12 + mlx-lm (idempotent)
+## Start the full stack (backend-aware)
+up:
+ifeq ($(BACKEND),nvidia)
+	@echo "Starting stack  [nvidia → vLLM → $(VLLM_MODEL)]"
+else
+	@echo "Starting stack  [mlx → $(MLX_MODEL)]"
+	@$(MAKE) --no-print-directory mlx-start
+endif
+	$(DC) up -d
+	@echo ""
+	@echo "Stack is up  ($(BACKEND)):"
+	@echo "  LiteLLM API (OpenAI-compat)  →  http://localhost:$(LITELLM_PORT)"
+	@echo "  Open WebUI                   →  http://localhost:$(WEBUI_PORT)"
+	@echo "  Grafana                      →  http://localhost:$(GRAFANA_PORT)"
+	@echo "  Health                       →  http://localhost:$(LITELLM_PORT)/health"
+ifeq ($(BACKEND),nvidia)
+	@echo ""
+	@echo "  Model : $(VLLM_MODEL)"
+	@echo "  First run downloads the model — watch with:  make logs s=vllm"
+else
+	@echo "  MLX Server                   →  http://localhost:$(MLX_PORT)"
+endif
+
+## Stop everything
+down:
+	$(DC) down
+ifneq ($(BACKEND),nvidia)
+	@$(MAKE) --no-print-directory mlx-stop
+endif
+
+## Restart everything
+restart: down up
+
+## Tail Docker logs (usage: make logs  or  make logs s=litellm)
+logs:
+	$(DC) logs -f $(s)
+
+## Show service status
+status:
+	@echo "── Services ($(BACKEND)) ──"
+	@$(DC) ps
+ifeq ($(BACKEND),nvidia)
+	@echo ""
+	@echo "── vLLM ──"
+	@curl -s http://localhost:$(VLLM_PORT)/v1/models 2>/dev/null \
+		| python3 -c "import sys,json;[print('  '+m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null \
+		|| echo "  (not responding)"
+else
+	@echo ""
+	@echo "── MLX Server ──"
+	@if [ -f $(MLX_PID) ] && kill -0 $$(cat $(MLX_PID)) 2>/dev/null; then \
+		echo "Running  (PID $$(cat $(MLX_PID)),  port $(MLX_PORT))"; \
+		curl -s http://localhost:$(MLX_PORT)/v1/models 2>/dev/null \
+			| python3 -c "import sys,json;[print('  '+m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null \
+			|| echo "  (could not query models)"; \
+	else echo "Not running"; fi
+endif
+
+# ── Health ──────────────────────────────────────────────────────────────────
+
+## Probe every service endpoint
+health:
+	@echo "── Health ──"
+	@printf "  LiteLLM ............. " && \
+		curl -sf http://localhost:$(LITELLM_PORT)/health/liveliness >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+	@printf "  LiteLLM (models) .... " && \
+		curl -sf http://localhost:$(LITELLM_PORT)/health/readiness >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+	@printf "  Open WebUI .......... " && \
+		curl -sf http://localhost:$(WEBUI_PORT) >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+	@printf "  Prometheus .......... " && \
+		curl -sf http://localhost:$(PROMETHEUS_PORT)/-/healthy >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+	@printf "  Grafana ............. " && \
+		curl -sf http://localhost:$(GRAFANA_PORT)/api/health >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+ifeq ($(BACKEND),nvidia)
+	@printf "  vLLM ................ " && \
+		curl -sf http://localhost:$(VLLM_PORT)/health >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+else
+	@printf "  MLX ................. " && \
+		curl -sf http://localhost:$(MLX_PORT)/v1/models >/dev/null 2>&1 \
+		&& echo "ok" || echo "FAIL"
+endif
+
+# ── MLX Backend (macOS Apple Silicon) ────────────────────────────────────────
+
+## Install Python + mlx-lm (idempotent)
 setup:
 	@PYBIN=$$(command -v python3.12 2>/dev/null || \
 	          command -v python3.11 2>/dev/null || \
@@ -44,13 +153,13 @@ setup:
 	@$(PIP) show mlx-lm >/dev/null 2>&1 || \
 		(echo "Installing mlx-lm..." && $(PIP) install --quiet mlx-lm)
 
-## Start MLX inference server in the background
+## Start MLX inference server in background
 mlx-start: setup
 	@if [ -f $(MLX_PID) ] && kill -0 $$(cat $(MLX_PID)) 2>/dev/null; then \
 		echo "MLX server already running (PID $$(cat $(MLX_PID)))"; exit 0; fi
-	@echo "Starting MLX server with $(MLX_DEFAULT_MODEL)..."
+	@echo "Starting MLX server with $(MLX_MODEL)..."
 	@$(PYTHON) -m mlx_lm.server \
-		--model $(MLX_DEFAULT_MODEL) \
+		--model $(MLX_MODEL) \
 		--host 0.0.0.0 \
 		--port $(MLX_PORT) > $(MLX_LOG) 2>&1 & echo $$! > $(MLX_PID)
 	@echo "Waiting for MLX server..."; \
@@ -69,87 +178,53 @@ mlx-stop:
 		&& { kill $$(cat $(MLX_PID)) 2>/dev/null; rm -f $(MLX_PID); echo "MLX server stopped"; } \
 		|| echo "MLX server not running"
 
-## Start MLX server + all Docker services
-up: mlx-start
-	$(DC) up -d
-	@echo ""
-	@echo "Stack is up:"
-	@echo "  Open WebUI   → http://localhost:3001"
-	@echo "  LiteLLM API  → http://localhost:4000"
-	@echo "  Grafana      → http://localhost:3000"
-	@echo "  MLX Server   → http://localhost:$(MLX_PORT)"
-
-## Stop everything
-down:
-	$(DC) down
-	@$(MAKE) --no-print-directory mlx-stop
-
-## Restart everything
-restart: down up
-
-## Tail Docker logs (usage: make logs  or  make logs s=litellm)
-logs:
-	$(DC) logs -f $(s)
-
-## Show service status
-status:
-	@echo "── Docker Services ──"
-	@$(DC) ps
-	@echo "\n── MLX Server ──"
-	@if [ -f $(MLX_PID) ] && kill -0 $$(cat $(MLX_PID)) 2>/dev/null; then \
-		echo "Running (PID $$(cat $(MLX_PID)), port $(MLX_PORT))"; \
-		curl -s http://localhost:$(MLX_PORT)/v1/models 2>/dev/null \
-			| python3 -c "import sys,json;[print('  '+m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null \
-			|| echo "  (could not query models)"; \
-	else echo "Not running"; fi
+## Tail MLX server log
+mlx-logs:
+	@tail -f $(MLX_LOG) 2>/dev/null || echo "No MLX log file found"
 
 # ── Model Management ────────────────────────────────────────────────────────
 
-## Pre-download a model (usage: make pull MODEL=mlx-community/Qwen2.5-Coder-7B-Instruct-4bit)
-pull: setup
+## Pre-download a model from HuggingFace
+pull:
 ifndef MODEL
-	$(error MODEL is required. Usage: make pull MODEL=mlx-community/Qwen2.5-Coder-7B-Instruct-4bit)
+	$(error Usage: make pull MODEL=Qwen/Qwen2.5-Coder-32B-Instruct)
 endif
+ifeq ($(BACKEND),nvidia)
+	docker run --rm -v $$(docker volume inspect local-llm-stack_huggingface_cache -f '{{.Mountpoint}}' 2>/dev/null || echo huggingface_cache):/root/.cache/huggingface \
+		python:3.12-slim pip install -q huggingface_hub && huggingface-cli download $(MODEL) \
+		|| (echo "Falling back to local download..." && pip install -q huggingface_hub && huggingface-cli download $(MODEL))
+else
+	@$(MAKE) --no-print-directory setup
 	$(VENV)/bin/huggingface-cli download $(MODEL)
+endif
 
-## Download all models defined in models.yaml
-pull-all: setup
-	@grep 'model: openai/' models.yaml | sed 's|.*openai/||' | while read m; do \
-		echo "Downloading $$m..."; \
-		$(VENV)/bin/huggingface-cli download "$$m"; \
-	done
-
-## List downloaded MLX models
+## List downloaded models
 models:
 	@echo "Downloaded models in HuggingFace cache:"
 	@ls ~/.cache/huggingface/hub/ 2>/dev/null \
 		| grep "^models--" \
 		| sed 's/^models--//; s/--/\//g' \
 		| sort \
-		|| echo "  (none — run 'make pull-all' to download)"
+		|| echo "  (none — run 'make pull MODEL=...' to download)"
 
 # ── LiteLLM ─────────────────────────────────────────────────────────────────
 
-## Restart LiteLLM to pick up models.yaml changes
+## Restart LiteLLM to reload config
 restart-litellm:
 	$(DC) restart litellm
 
 ## Smoke-test the LiteLLM API
 test:
-	@echo "Listing models via LiteLLM..."
-	@curl -s http://localhost:4000/v1/models \
-		-H "Authorization: Bearer sk-llmstack-local" | python3 -m json.tool
-
-# ── MLX Server Logs ─────────────────────────────────────────────────────────
-
-## Tail MLX server log
-mlx-logs:
-	@tail -f $(MLX_LOG) 2>/dev/null || echo "No MLX log file found"
+	@echo "── Models available via LiteLLM ──"
+	@curl -s http://localhost:$(LITELLM_PORT)/v1/models \
+		-H "Authorization: Bearer $(LITELLM_MASTER_KEY)" | python3 -m json.tool
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
 ## Stop stack and remove all volumes (destructive — deletes chat history, metrics)
 clean:
 	$(DC) down -v
+ifneq ($(BACKEND),nvidia)
 	@$(MAKE) --no-print-directory mlx-stop
+endif
 	rm -f $(MLX_LOG)

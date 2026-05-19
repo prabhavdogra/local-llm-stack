@@ -2,3 +2,4 @@
 .venv/
 .mlx.pid
 .mlx.log
+.env
