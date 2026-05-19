@@ -40,6 +40,9 @@ services:
       - "${VLLM_TENSOR_PARALLEL_SIZE:-1}"
       - --trust-remote-code
       - --enforce-eager
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
     deploy:
       resources:
         reservations:
@@ -72,6 +75,25 @@ services:
     depends_on:
       vllm:
         condition: service_healthy
+
+  # ── ngrok Tunnel (public HTTPS for Cursor) ─────────────────────────────
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok
+    command: http litellm:4000 --domain ${NGROK_DOMAIN}
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    networks:
+      - llmstack
+    depends_on:
+      litellm:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
 
 volumes:
   huggingface_cache:

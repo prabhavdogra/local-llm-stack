@@ -27,6 +27,15 @@ litellm_settings:
 
 model_list:
 
+  - model_name: qwen3-coder
+    litellm_params:
+      model: os.environ/LITELLM_MODEL
+      api_key: none
+      api_base: http://vllm:8000/v1
+    model_info:
+      id: qwen3-coder
+      description: "Qwen3-Coder-Next 80B FP8 via vLLM"
+
   - model_name: default
     litellm_params:
       model: os.environ/LITELLM_MODEL
@@ -34,4 +43,4 @@ model_list:
       api_base: http://vllm:8000/v1
     model_info:
       id: default
-      description: "GPU-accelerated model served by vLLM. See VLLM_MODEL in .env."
+      description: "Alias for the active GPU model"
