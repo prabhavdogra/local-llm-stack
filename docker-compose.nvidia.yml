@@ -11,7 +11,7 @@ services:
 
   # ── vLLM Inference Server (GPU) ─────────────────────────────────────────
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.20.1
     container_name: vllm
     ipc: host
     ports:
@@ -70,14 +70,17 @@ services:
     volumes:
       - ./models.nvidia.yaml:/app/config.yaml:ro
     environment:
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmstack-local}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set in .env}
       - LITELLM_MODEL=openai/${VLLM_MODEL:-Qwen/Qwen3-Coder-Next-FP8}
     depends_on:
       vllm:
         condition: service_healthy
 
-  # ── ngrok Tunnel (public HTTPS for Cursor) ─────────────────────────────
+  # ── ngrok Tunnel (optional — public HTTPS for Cursor) ───────────────────
+  # Start with:  COMPOSE_PROFILES=ngrok make up
+  # Requires NGROK_AUTHTOKEN and NGROK_DOMAIN in .env
   ngrok:
+    profiles: ["ngrok"]
     image: ngrok/ngrok:latest
     container_name: ngrok
     command: http litellm:4000 --domain ${NGROK_DOMAIN}

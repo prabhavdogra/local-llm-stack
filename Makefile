@@ -1,6 +1,10 @@
 # ── Local LLM Stack ──────────────────────────────────────────────────────────
 # Usage:
+#   make config                    Create .env from .env.example + generate secrets
+#   make config FORCE=1            Overwrite .env and regenerate secrets
+#   make check-env                 Report required / missing optional .env vars
 #   make up                        Start (reads BACKEND from .env)
+#   make up-ngrok                  Start with ngrok (needs NGROK_* in .env)
 #   make up BACKEND=nvidia         Override backend for this run
 #   make down                      Stop everything
 #   make restart                   Restart everything
@@ -9,7 +13,14 @@
 #   make logs [s=SERVICE]          Tail logs (e.g. make logs s=vllm)
 #   make test                      Smoke-test the LiteLLM API
 #   make pull MODEL=<hf-id>        Pre-download a model
+#   make sync                      Rsync repo to DGX Spark (see scripts/sync-to-dgx.sh)
+#   make remote-up                 sync + make up on DGX
 # ─────────────────────────────────────────────────────────────────────────────
+
+# DGX Spark — override if your SSH config differs
+DGX_HOST ?= prabhav@spark-2393.local
+DGX_PATH ?= ~/Desktop/repositories/local-llm-stack
+export DGX_HOST DGX_PATH
 
 # Load .env as Make variables; export them to child processes (docker compose).
 -include .env
@@ -22,7 +33,8 @@ MLX_PORT         ?= 8800
 VLLM_MODEL       ?= Qwen/Qwen3-Coder-Next
 VLLM_PORT        ?= 8000
 LITELLM_PORT     ?= 4000
-LITELLM_MASTER_KEY ?= sk-llmstack-local
+# LITELLM_MASTER_KEY has no default — must come from .env. `make test` fails
+# loudly with an empty Authorization header if it's missing.
 WEBUI_PORT       ?= 3001
 GRAFANA_PORT     ?= 3000
 PROMETHEUS_PORT  ?= 9090
@@ -39,15 +51,90 @@ DC := docker compose -f docker-compose.yml -f docker-compose.nvidia.yml
 else
 DC := docker compose
 endif
+ifneq ($(COMPOSE_PROFILES),)
+export COMPOSE_PROFILES
+endif
 
-.PHONY: up down restart logs status health test \
+.PHONY: up up-do up-ngrok down restart logs status health test config ensure-config config-secrets check-env \
+        sync sync-dry ssh-dgx remote-up remote-config seed-admin \
         setup mlx-start mlx-stop mlx-logs \
         pull pull-all models restart-litellm clean
 
+# ── DGX sync / remote ───────────────────────────────────────────────────────
+
+## Rsync this repo to DGX (excludes .env, .venv — run make config on the DGX)
+sync:
+	@bash scripts/sync-to-dgx.sh
+
+sync-dry:
+	@DRY_RUN=1 bash scripts/sync-to-dgx.sh
+
+## Open SSH shell in the project dir on the DGX
+ssh-dgx:
+	@ssh -t $(DGX_HOST) "cd $(DGX_PATH) && exec bash -l"
+
+## First-time .env setup on the DGX (after sync)
+remote-config:
+	@ssh -t $(DGX_HOST) "cd $(DGX_PATH) && make config && make check-env"
+
+## Sync then start the stack on the DGX
+remote-up: sync
+	@ssh -t $(DGX_HOST) "cd $(DGX_PATH) && make ensure-config && make check-env QUIET=1 && make up-do"
+
+## Seed Open WebUI admin user (runs automatically in make up)
+seed-admin:
+	@python3 scripts/seed-admin.py
+
+# ── Configuration ───────────────────────────────────────────────────────────
+
+## Idempotent: create .env if missing; fill secrets only while placeholders remain
+ensure-config:
+	@test -f .env.example || { echo "ERROR: .env.example not found"; exit 1; }
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "Created .env from .env.example"; \
+		$(MAKE) --no-print-directory config-secrets; \
+	else \
+		$(MAKE) --no-print-directory config-secrets ONLY_PLACEHOLDERS=1 QUIET=1; \
+	fi
+
+## Create .env from .env.example and generate LITELLM_MASTER_KEY + GRAFANA_ADMIN_PASSWORD
+config:
+	@if [ "$(FORCE)" = "1" ]; then \
+		test -f .env.example || { echo "ERROR: .env.example not found"; exit 1; }; \
+		cp .env.example .env; \
+		echo "Reset .env from .env.example"; \
+		$(MAKE) --no-print-directory config-secrets; \
+	elif [ -f .env ]; then \
+		echo ".env already exists — skipping copy."; \
+		echo "  Run 'make config FORCE=1' to reset from .env.example."; \
+		$(MAKE) --no-print-directory config-secrets ONLY_PLACEHOLDERS=1; \
+	else \
+		$(MAKE) --no-print-directory ensure-config; \
+	fi
+	@$(MAKE) --no-print-directory check-env
+
+config-secrets:
+	@ONLY_PLACEHOLDERS="$(ONLY_PLACEHOLDERS)" QUIET="$(QUIET)" python3 scripts/config-secrets.py
+
+## Validate .env (required secrets + conditional HF_TOKEN / NGROK_*)
+check-env:
+	@BACKEND="$(BACKEND)" COMPOSE_PROFILES="$(COMPOSE_PROFILES)" QUIET="$(QUIET)" python3 scripts/check-env.py
+
+## Start with ngrok tunnel (requires NGROK_AUTHTOKEN + NGROK_DOMAIN in .env)
+up-ngrok:
+	@COMPOSE_PROFILES=ngrok $(MAKE) --no-print-directory ensure-config
+	@COMPOSE_PROFILES=ngrok BACKEND="$(BACKEND)" $(MAKE) --no-print-directory check-env
+	@COMPOSE_PROFILES=ngrok $(MAKE) --no-print-directory up-do
+
 # ── Stack Lifecycle ──────────────────────────────────────────────────────────
 
-## Start the full stack (backend-aware)
-up:
+## Start the full stack (backend-aware; runs ensure-config first)
+up: ensure-config
+	@$(MAKE) --no-print-directory check-env QUIET=1
+	@$(MAKE) --no-print-directory up-do
+
+up-do:
 ifeq ($(BACKEND),nvidia)
 	@echo "Starting stack  [nvidia → vLLM → $(VLLM_MODEL)]"
 else
@@ -55,6 +142,7 @@ else
 	@$(MAKE) --no-print-directory mlx-start
 endif
 	$(DC) up -d
+	@python3 scripts/seed-admin.py
 	@echo ""
 	@echo "Stack is up  ($(BACKEND)):"
 	@echo "  LiteLLM API (OpenAI-compat)  →  http://localhost:$(LITELLM_PORT)"
@@ -158,6 +246,10 @@ mlx-start: setup
 	@if [ -f $(MLX_PID) ] && kill -0 $$(cat $(MLX_PID)) 2>/dev/null; then \
 		echo "MLX server already running (PID $$(cat $(MLX_PID)))"; exit 0; fi
 	@echo "Starting MLX server with $(MLX_MODEL)..."
+	@# Bind to 0.0.0.0 is REQUIRED on macOS so the LiteLLM container can reach
+	@# the host MLX server via host.docker.internal. The MLX server has no auth,
+	@# so this also exposes it to the LAN — protect with a host firewall if you
+	@# don't trust your network.
 	@$(PYTHON) -m mlx_lm.server \
 		--model $(MLX_MODEL) \
 		--host 0.0.0.0 \

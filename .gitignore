@@ -1,5 +1,27 @@
+# ── OS / Editor ─────────────────────────────────────────────────────────────
 .DS_Store
+.idea/
+.vscode/
+
+# ── Python ──────────────────────────────────────────────────────────────────
 .venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Secrets / Local Config ──────────────────────────────────────────────────
+# Ignore all .env variants, but always keep the example template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Runtime / Logs ──────────────────────────────────────────────────────────
+*.pid
+*.log
 .mlx.pid
 .mlx.log
-.env
+
+# ── Generated / Eval Output ─────────────────────────────────────────────────
+evalplus_results/

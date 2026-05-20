@@ -15,7 +15,8 @@ services:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: litellm
     ports:
-      - "${LITELLM_PORT:-4000}:4000"
+      # Bind to all interfaces for LAN access. Restrict with firewall if needed.
+      - "0.0.0.0:${LITELLM_PORT:-4000}:4000"
     volumes:
       - ./models.yaml:/app/config.yaml:ro
     command:
@@ -26,11 +27,19 @@ services:
       - "--num_workers"
       - "${LITELLM_WORKERS:-4}"
     environment:
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmstack-local}
+      # Required — compose refuses to start if not set in .env.
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set in .env}
+      - DATABASE_URL=postgresql://litellm:litellm-db-pw-local@litellm-db:5432/litellm
+      - STORE_MODEL_IN_DB=True
+      - UI_USERNAME=admin
+      - UI_PASSWORD=${LITELLM_MASTER_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - llmstack
+    depends_on:
+      litellm-db:
+        condition: service_healthy
     restart: unless-stopped
     logging: &default-logging
       driver: json-file
@@ -38,26 +47,52 @@ services:
         max-size: "50m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health/readiness"]
-      interval: 15s
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 10s
       timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ── LiteLLM Database (required for UI dashboard) ────────────────────────
+  litellm-db:
+    image: postgres:16-alpine
+    container_name: litellm-db
+    environment:
+      - POSTGRES_DB=litellm
+      - POSTGRES_USER=litellm
+      - POSTGRES_PASSWORD=litellm-db-pw-local
+    volumes:
+      - litellm_db_data:/var/lib/postgresql/data
+    networks:
+      - llmstack
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 3s
       retries: 5
-      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
 
   # ── Chat UI ──────────────────────────────────────────────────────────────
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     ports:
-      - "${WEBUI_PORT:-3001}:8080"
+      # Bind to all interfaces for LAN access. Restrict with firewall if needed.
+      - "0.0.0.0:${WEBUI_PORT:-3001}:8080"
     volumes:
       - openwebui_data:/app/backend/data
     environment:
       - ENABLE_OLLAMA_API=false
       - OPENAI_API_BASE_URLS=http://litellm:4000/v1
-      - OPENAI_API_KEYS=${LITELLM_MASTER_KEY:-sk-llmstack-local}
-      - WEBUI_AUTH=false
-      - ENABLE_SIGNUP=false
+      - OPENAI_API_KEYS=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set in .env}
+      # Auth on by default. First user created becomes admin.
+      - WEBUI_AUTH=true
+      - ENABLE_SIGNUP=${WEBUI_ENABLE_SIGNUP:-true}
     networks:
       - llmstack
     depends_on:
@@ -93,14 +128,16 @@ services:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      # Bind to all interfaces for LAN access. Restrict with firewall if needed.
+      - "0.0.0.0:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      # Required — compose refuses to start if not set in .env.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set in .env}
+      # Anonymous viewer access disabled. Log in with admin / GRAFANA_ADMIN_PASSWORD.
+      - GF_AUTH_ANONYMOUS_ENABLED=false
     networks:
       - llmstack
     depends_on:
@@ -117,6 +154,7 @@ networks:
     driver: bridge
 
 volumes:
+  litellm_db_data:
   openwebui_data:
   prometheus_data:
   grafana_data:
