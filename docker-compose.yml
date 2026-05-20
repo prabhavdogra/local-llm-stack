@@ -38,11 +38,11 @@ services:
         max-size: "50m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')\""]
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/readiness"]
       interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 90s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ── Chat UI ──────────────────────────────────────────────────────────────
   open-webui:
