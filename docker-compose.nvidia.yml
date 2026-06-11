@@ -42,7 +42,7 @@ services:
       - --enforce-eager
       - --enable-auto-tool-choice
       - --tool-call-parser
-      - qwen3-coder
+      - qwen3_coder
     deploy:
       resources:
         reservations:
