@@ -33,13 +33,10 @@ services:
     command:
       - serve
       - ${VLLM_MODEL:-Inferact/Qwen3.8-27B-NVFP4}
-      # Stable public names — clients keep requesting these; HF id can change
+      # Canonical served id. LiteLLM aliases (qwen3-coder, qwen3.6-coder, …)
+      # all rewrite to this name before hitting vLLM.
       - --served-model-name
-      - qwen3-coder
-      - qwen3.6-coder
       - qwen3.8
-      - qwen3.8-coder
-      - qwen3.6
       - --host
       - "0.0.0.0"
       - --port
@@ -93,7 +90,7 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set in .env}
       # Points at the stable vLLM served name (not the HF repo id)
-      - LITELLM_MODEL=openai/qwen3-coder
+      - LITELLM_MODEL=openai/qwen3.8
     depends_on:
       vllm:
         condition: service_healthy
@@ -101,8 +98,8 @@ services:
   # ── ngrok Tunnel (optional — public HTTPS for Cursor) ───────────────────
   # Start with:  COMPOSE_PROFILES=ngrok make up
   # Requires NGROK_AUTHTOKEN and NGROK_DOMAIN in .env
-  # NOTE: --pooling-enabled load-balances across agents sharing NGROK_DOMAIN.
-  # Pinning this Spark alone is a follow-up (drop pooling / unique domain).
+  # Shared pool (del.llm): --pooling-enabled load-balances across agents.
+  # Personal / pinned traffic: use http://gpu.local:4000 (LAN) instead of ngrok.
   ngrok:
     profiles: ["ngrok"]
     image: ngrok/ngrok:latest

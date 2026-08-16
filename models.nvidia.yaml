@@ -2,9 +2,8 @@
 # LiteLLM config for NVIDIA GPU backend (vLLM).
 # Mounted as /app/config.yaml when BACKEND=nvidia.
 #
-# ALL aliases below route to the same active GPU weights (VLLM_MODEL in .env).
-# Clients can keep calling qwen3.6-coder / qwen3.8 / qwen3-coder — nothing breaks
-# when you swap the underlying HF checkpoint.
+# Every client model name below routes to vLLM served id "qwen3.8"
+# (weights = VLLM_MODEL in .env).
 #
 # To switch weights: change VLLM_MODEL in .env → make restart
 # ─────────────────────────────────────────────────────────────────────────────
@@ -27,70 +26,90 @@ litellm_settings:
 
 model_list:
 
-  # ── Primary / current ───────────────────────────────────────────────────
   - model_name: qwen3.8
     litellm_params:
-      model: openai/qwen3-coder
+      model: openai/qwen3.8
       api_key: none
       api_base: http://vllm:8000/v1
       supports_function_calling: true
     model_info:
       id: qwen3.8
-      description: "Qwen3.8 (current GPU weights)"
+      description: "Qwen3.8 (canonical)"
       supports_function_calling: true
 
   - model_name: qwen3.8-coder
     litellm_params:
-      model: openai/qwen3-coder
+      model: openai/qwen3.8
       api_key: none
       api_base: http://vllm:8000/v1
       supports_function_calling: true
     model_info:
       id: qwen3.8-coder
-      description: "Qwen3.8 coder alias → same GPU weights"
+      description: "Alias → qwen3.8"
       supports_function_calling: true
 
   - model_name: qwen3-coder
     litellm_params:
-      model: openai/qwen3-coder
+      model: openai/qwen3.8
       api_key: none
       api_base: http://vllm:8000/v1
       supports_function_calling: true
     model_info:
       id: qwen3-coder
-      description: "Stable coder alias → Qwen3.8"
+      description: "Alias → qwen3.8"
       supports_function_calling: true
 
-  # ── Legacy (do not remove — existing harnesses / Cursor / services) ─────
+  - model_name: qwen3-code
+    litellm_params:
+      model: openai/qwen3.8
+      api_key: none
+      api_base: http://vllm:8000/v1
+      supports_function_calling: true
+    model_info:
+      id: qwen3-code
+      description: "Alias → qwen3.8"
+      supports_function_calling: true
+
   - model_name: qwen3.6-coder
     litellm_params:
-      model: openai/qwen3-coder
+      model: openai/qwen3.8
       api_key: none
       api_base: http://vllm:8000/v1
       supports_function_calling: true
     model_info:
       id: qwen3.6-coder
-      description: "Compat: qwen3.6-coder → Qwen3.8"
+      description: "Alias → qwen3.8"
+      supports_function_calling: true
+
+  - model_name: qwen3.6coder
+    litellm_params:
+      model: openai/qwen3.8
+      api_key: none
+      api_base: http://vllm:8000/v1
+      supports_function_calling: true
+    model_info:
+      id: qwen3.6coder
+      description: "Alias → qwen3.8"
       supports_function_calling: true
 
   - model_name: qwen3.6
     litellm_params:
-      model: openai/qwen3-coder
+      model: openai/qwen3.8
       api_key: none
       api_base: http://vllm:8000/v1
       supports_function_calling: true
     model_info:
       id: qwen3.6
-      description: "Compat: qwen3.6 → Qwen3.8"
+      description: "Alias → qwen3.8"
       supports_function_calling: true
 
   - model_name: default
     litellm_params:
-      model: openai/qwen3-coder
+      model: openai/qwen3.8
       api_key: none
       api_base: http://vllm:8000/v1
       supports_function_calling: true
     model_info:
       id: default
-      description: "Default alias → active GPU model"
+      description: "Alias → qwen3.8"
       supports_function_calling: true
