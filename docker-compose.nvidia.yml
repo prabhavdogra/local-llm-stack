@@ -32,7 +32,7 @@ services:
       - VLLM_USE_FLASHINFER_MOE_FP4=0
     command:
       - serve
-      - ${VLLM_MODEL:-Inferact/Qwen3.8-27B-NVFP4}
+      - ${VLLM_MODEL:-sakamakismile/Qwen3.8-27B-MTP-NVFP4}
       # Canonical served id. LiteLLM aliases (qwen3-coder, qwen3.6-coder, …)
       # all rewrite to this name before hitting vLLM.
       - --served-model-name
@@ -55,6 +55,11 @@ services:
       - --enable-prefix-caching
       - --attention-backend
       - TRITON_ATTN
+      # Skip vision tower — text/code only (faster load, more KV for decode)
+      - --language-model-only
+      # MTP speculative decode (~1.7–2× tok/s). Needs an MTP-capable checkpoint.
+      - --speculative-config
+      - '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
       # No --enforce-eager: CUDA graphs are critical on GB10
       - --enable-auto-tool-choice
       - --tool-call-parser
